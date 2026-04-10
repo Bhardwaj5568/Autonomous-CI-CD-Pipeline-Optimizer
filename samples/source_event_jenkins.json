@@ -1,0 +1,32 @@
+{
+  "source_system": "jenkins",
+  "payload": {
+    "tenant_id": "demo-enterprise",
+    "job_name": "payments-service",
+    "pipeline_id": "payments-main",
+    "branch": "main",
+    "commit_sha": "9988aa",
+    "build": {
+      "number": 887,
+      "result": "FAILURE",
+      "duration": 480000
+    },
+    "stages": [
+      {
+        "id": "jk-build",
+        "name": "Build",
+        "status": "SUCCESS",
+        "duration_ms": 160000,
+        "retries": 0
+      },
+      {
+        "id": "jk-test",
+        "name": "Test",
+        "status": "FAILURE",
+        "duration_ms": 320000,
+        "retries": 2,
+        "failure_signature": "integration-timeout"
+      }
+    ]
+  }
+}

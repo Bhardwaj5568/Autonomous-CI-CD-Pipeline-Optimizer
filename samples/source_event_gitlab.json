@@ -1,0 +1,32 @@
+{
+  "source_system": "gitlab_ci",
+  "payload": {
+    "tenant_id": "demo-enterprise",
+    "project_id": "proj-99",
+    "ref": "main",
+    "sha": "ff2233",
+    "pipeline": {
+      "id": 5401,
+      "status": "failed",
+      "duration": 620
+    },
+    "jobs": [
+      {
+        "id": "gl-build",
+        "name": "build",
+        "stage": "build",
+        "status": "success",
+        "duration": 180
+      },
+      {
+        "id": "gl-test",
+        "name": "test",
+        "stage": "test",
+        "status": "failed",
+        "duration": 440,
+        "retry": 1,
+        "failure_reason": "script_failure"
+      }
+    ]
+  }
+}
