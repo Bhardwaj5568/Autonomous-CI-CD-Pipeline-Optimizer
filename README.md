@@ -33,6 +33,28 @@ Teams can use this service to:
 - DevOps teams validating webhook/event integrations from Jenkins/GitHub/GitLab
 - Engineering leadership reviewing operational KPIs and audit history
 
+## Architecture Overview (High-Level)
+
+Data flow:
+1. CI/CD source events are received from GitHub Actions, GitLab CI, and Jenkins.
+2. Events are normalized into a canonical schema.
+3. Webhook events are queued for async processing.
+4. Scoring engine computes run risk and recommendation.
+5. Results are exposed via APIs, status UI, KPI endpoints, and audit logs.
+
+## Configuration (Non-Secret)
+
+Use these environment variable names in your local `.env` (never commit real values):
+
+| Variable | Purpose | Example (safe) |
+|---|---|---|
+| `APP_NAME` | Display name of service | `Autonomous CI/CD Pipeline Optimizer` |
+| `DATABASE_URL` | Database connection string | `sqlite:///./optimizer.db` |
+| `APP_API_KEY` | Optional API key for protected routes | `change-me` |
+| `RISK_BLOCK_THRESHOLD` | Score threshold for `block` | `85` |
+| `RISK_DELAY_THRESHOLD` | Score threshold for `delay` | `70` |
+| `RISK_CANARY_THRESHOLD` | Score threshold for `canary` | `50` |
+
 ## Quick Start
 
 1. Install dependencies:
@@ -55,6 +77,10 @@ Preferred (always correct app-dir):
 
 3. Open docs:
 - http://127.0.0.1:8000/docs
+
+Important startup note:
+- If you start from wrong working directory, you may see `No module named app`.
+- Prefer using `./start_server.ps1` or `--app-dir` command shown above.
 
 ## Main Endpoints
 - `POST /ingest/events` ingest normalized events
@@ -80,6 +106,17 @@ Always pass role header:
 
 Optional for feedback attribution:
 - `X-User: your-name`
+
+## PASS / FAIL Interpretation
+
+Use `http://127.0.0.1:8000/status-ui` for visual verification:
+- Blue dot = PASS for that check
+- Red dot = FAIL for that check
+- `OVERALL PASS` means all runtime checks are healthy
+- `OVERALL FAIL` means at least one runtime check is failing
+
+Typical fail example:
+- `Queue error free` turns FAIL when malformed webhook payloads are processed
 
 ## Sample Inputs
 See `samples/` for source payload examples.
@@ -109,8 +146,7 @@ f:/CI-Cd/.venv/Scripts/python.exe -c "import sys; sys.path.insert(0, r'f:/CI-Cd/
 Run the full project smoke test from PowerShell:
 
 ```powershell
-.
-qa_smoke.ps1 -StartServer
+.\qa_smoke.ps1 -StartServer
 ```
 
 ## Quick Pass/Fail Demo Scripts
@@ -152,3 +188,22 @@ This checks:
 - feedback and KPIs
 - RBAC rejection
 - async webhook queue processing
+
+## Known Limitations (Current Build)
+
+- Queue failure counter is in-memory and resets on server restart.
+- Status UI is intended for operational checks, not long-term historical reporting.
+- Local default database is SQLite; production should use managed relational storage.
+
+## Safe Sharing Rules
+
+Safe to keep in repo:
+- architecture overview (high-level)
+- env variable names only (no secret values)
+- run commands and sample payload usage
+- pass/fail interpretation and non-sensitive limitations
+
+Do not commit:
+- real API keys, tokens, passwords
+- internal hostnames/IPs/VPN endpoints
+- customer identifiers and private production logs
