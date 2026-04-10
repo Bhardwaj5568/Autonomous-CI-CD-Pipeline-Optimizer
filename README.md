@@ -9,6 +9,30 @@ A runnable MVP backend scaffold with:
 - RBAC-style role checks and optional API key authentication
 - Audit logs, feedback loop, and KPI endpoints
 
+## Problem It Solves
+
+This project solves common DevOps delivery problems:
+- Slow and flaky CI/CD pipelines
+- Risky releases that cause rollbacks and downtime
+- Lack of clear go/no-go deployment signals
+- Fragmented telemetry across GitHub Actions, GitLab CI, and Jenkins
+- Low visibility into release quality, reliability, and operational risk
+
+## Why It Matters
+
+Teams can use this service to:
+- Detect and score risky runs before deployment
+- Standardize pipeline insights across multiple CI/CD tools
+- Improve release confidence with auditable recommendations
+- Track reliability trends with KPI and feedback loops
+
+## Real-World Use Cases
+
+- Release managers checking whether a run should Deploy, Canary, Delay, or Block
+- Platform teams monitoring queue health and CI/CD risk trends
+- DevOps teams validating webhook/event integrations from Jenkins/GitHub/GitLab
+- Engineering leadership reviewing operational KPIs and audit history
+
 ## Quick Start
 
 1. Install dependencies:
