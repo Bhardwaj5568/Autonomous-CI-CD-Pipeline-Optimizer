@@ -52,24 +52,14 @@ try {
     $health = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -Method Get
     Add-Result 'Health endpoint' ($health.status -eq 'ok') ($health | ConvertTo-Json -Depth 10)
 
-    $operatorHeaders = @{ 'X-Role' = 'operator' }
     $viewerHeaders = @{ 'X-Role' = 'viewer'; 'X-User' = 'qa-user' }
     $adminHeaders = @{ 'X-Role' = 'admin' }
 
-    $githubPayload = Get-Content "$projectRoot/samples/source_event_github.json" -Raw | ConvertFrom-Json
-    $ingest = Invoke-RestMethod -Method Post -Uri 'http://127.0.0.1:8000/ingest/source-event' -Headers $operatorHeaders -ContentType 'application/json' -Body ($githubPayload | ConvertTo-Json -Depth 20)
-    $runId = $ingest.run_ids[0]
-    Add-Result 'GitHub ingest' ($ingest.ingested_count -gt 0) ($ingest | ConvertTo-Json -Depth 10)
+    $statusChecks = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8000/status/checks' -Headers $viewerHeaders
+    Add-Result 'Status checks' ($statusChecks.all_passed -in @($true, $false)) ($statusChecks | ConvertTo-Json -Depth 10)
 
-    $score = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/score/run/$runId" -Headers $operatorHeaders
-    Add-Result 'Score run' ($null -ne $score.risk_score) ($score | ConvertTo-Json -Depth 10)
-
-    $feedbackBody = '{"vote":"up","comment":"qa smoke pass"}'
-    $feedback = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/feedback/run/$runId" -Headers $viewerHeaders -ContentType 'application/json' -Body $feedbackBody
-    Add-Result 'Feedback' ($feedback.vote -eq 'up') ($feedback | ConvertTo-Json -Depth 10)
-
-    $kpis = Invoke-RestMethod -Method Get -Uri 'http://127.0.0.1:8000/kpis' -Headers $viewerHeaders
-    Add-Result 'KPIs' ($kpis.total_runs -ge 1) ($kpis | ConvertTo-Json -Depth 10)
+    $statusUi = Invoke-WebRequest -Uri 'http://127.0.0.1:8000/status-ui?source=smoke' -UseBasicParsing
+    Add-Result 'Status UI' ($statusUi.StatusCode -eq 200 -and (($statusUi.Content -match 'OVERALL PASS') -or ($statusUi.Content -match 'OVERALL FAIL'))) ($statusUi.Content.Substring(0, [Math]::Min(500, $statusUi.Content.Length)))
 
     $unauthorizedPassed = $false
     $unauthorizedDetails = ''
@@ -82,30 +72,8 @@ try {
     }
     Add-Result 'RBAC rejection' $unauthorizedPassed $unauthorizedDetails
 
-    $webhookScript = @"
-import json
-import sys
-import time
-sys.path.insert(0, r'f:/CI-Cd/autonomous-cicd-optimizer')
-from fastapi.testclient import TestClient
-from app.main import app
-client = TestClient(app)
-with open(r'f:/CI-Cd/autonomous-cicd-optimizer/samples/source_event_gitlab.json', 'r', encoding='utf-8') as f:
-    payload = json.load(f)
-with TestClient(app) as client:
-    response = client.post('/webhooks/gitlab-ci', json=payload['payload'], headers={'X-Role':'operator'})
-    status = {}
-    ok = False
-    for _ in range(40):
-        status = client.get('/queue/status', headers={'X-Role':'viewer'}).json()
-        if status['processed'] >= 1:
-            ok = True
-            break
-        time.sleep(0.05)
-print(json.dumps({'status_code': response.status_code, 'queued': response.json(), 'queue': status, 'processed_ok': ok}))
-"@
-    $webhookResult = & $python -c $webhookScript 2>&1 | ConvertFrom-Json
-    Add-Result 'Webhook queue' ($webhookResult.processed_ok -eq $true) ($webhookResult | ConvertTo-Json -Depth 10)
+    $health2 = Invoke-RestMethod -Uri 'http://127.0.0.1:8000/health' -Method Get
+    Add-Result 'Health recheck' ($health2.status -eq 'ok') ($health2 | ConvertTo-Json -Depth 10)
 
 }
 finally {

@@ -144,28 +144,22 @@ Use `http://127.0.0.1:8000/status-ui` for visual verification:
 Typical fail example:
 - `Queue error free` turns FAIL when malformed webhook payloads are processed
 
-## Sample Inputs
-See `samples/` for source payload examples.
+## Workflow-Driven Input
 
-## Quick API Walkthrough
+Production input should come from GitHub Actions only.
 
-1. Ingest a GitHub Actions source event:
+How the tool receives input:
+1. A GitHub Actions workflow runs on `test-integration` or `main`.
+2. The workflow builds a JSON payload from GitHub runtime context.
+3. The workflow POSTs that payload to `POST /webhooks/github-actions`.
+4. The API normalizes, stores, scores, and exposes the result through `/status/checks`, `/status-ui`, `/runs`, and `/assessments`.
 
-```powershell
-f:/CI-Cd/.venv/Scripts/python.exe -c "import sys,json; sys.path.insert(0, r'f:/CI-Cd/autonomous-cicd-optimizer'); from fastapi.testclient import TestClient; from app.main import app; c=TestClient(app); payload=json.load(open(r'f:/CI-Cd/autonomous-cicd-optimizer/samples/source_event_github.json','r',encoding='utf-8')); h={'X-Role':'operator'}; print(c.post('/ingest/source-event', json=payload, headers=h).json())"
-```
+Where to adjust input for testing:
+- Edit `.github/workflows/optimizer_webhook.yml` to change the payload values sent by the workflow.
+- Change fields like `repository`, `ref`, `sha`, `run_id`, or `jobs` in the workflow payload to observe different outputs.
 
-2. Score run `1024`:
-
-```powershell
-f:/CI-Cd/.venv/Scripts/python.exe -c "import sys; sys.path.insert(0, r'f:/CI-Cd/autonomous-cicd-optimizer'); from fastapi.testclient import TestClient; from app.main import app; c=TestClient(app); h={'X-Role':'operator'}; print(c.post('/score/run/1024', headers=h).json())"
-```
-
-3. Read KPIs:
-
-```powershell
-f:/CI-Cd/.venv/Scripts/python.exe -c "import sys; sys.path.insert(0, r'f:/CI-Cd/autonomous-cicd-optimizer'); from fastapi.testclient import TestClient; from app.main import app; c=TestClient(app); h={'X-Role':'viewer'}; print(c.get('/kpis', headers=h).json())"
-```
+If you need to change inputs for testing:
+- Edit the payload fields directly in `.github/workflows/optimizer_webhook.yml`
 
 ## Full QA Check
 
@@ -175,45 +169,16 @@ Run the full project smoke test from PowerShell:
 .\qa_smoke.ps1 -StartServer
 ```
 
-## Quick Pass/Fail Demo Scripts
+## Workflow Verification
 
-1. Start server:
+Use GitHub Actions as the only production input path.
 
-```powershell
-.\start_server.ps1
-```
+1. Trigger `.github/workflows/optimizer_webhook.yml` from the `test-integration` branch.
+2. Confirm the workflow log shows `Health status: 200`.
+3. Confirm the workflow log shows `Webhook HTTP status: 200`.
+4. Open `/status/checks` and `/status-ui` on the public tunnel URL to confirm live PASS/FAIL status.
 
-2. Run PASS demo:
-
-```powershell
-.\run_pass_demo.ps1
-```
-
-3. Run FAIL demo:
-
-```powershell
-.\run_fail_demo.ps1
-```
-
-4. Stop server:
-
-```powershell
-.\stop_server.ps1
-```
-
-5. Show PASS then FAIL in browser (with cache-busting URL):
-
-```powershell
-.\demo_browser_pass_fail.ps1
-```
-
-This checks:
-- unit tests
-- health endpoint
-- ingest and scoring
-- feedback and KPIs
-- RBAC rejection
-- async webhook queue processing
+If you need to change the observed output, edit the payload fields inside `.github/workflows/optimizer_webhook.yml` and rerun the workflow.
 
 ## Known Limitations (Current Build)
 
@@ -233,3 +198,5 @@ Do not commit:
 - real API keys, tokens, passwords
 - internal hostnames/IPs/VPN endpoints
 - customer identifiers and private production logs
+
+GitHub Actions workflow payloads are the production input path.

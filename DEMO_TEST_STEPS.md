@@ -14,36 +14,14 @@ Set-Location "f:\CI-Cd\autonomous-cicd-optimizer"
 Expected:
 - Current folder becomes `f:\CI-Cd\autonomous-cicd-optimizer`
 
-## Fast Script Workflow (Recommended)
-Use these commands for a no-confusion run:
+## Fast Workflow-Only Verification
+Use GitHub Actions as the only production input source.
 
-```powershell
-.\start_server.ps1
-```
-
-In a second terminal:
-
-```powershell
-.\run_pass_demo.ps1
-```
-
-To simulate fail:
-
-```powershell
-.\run_fail_demo.ps1
-```
-
-Combined browser demo (shows PASS then FAIL):
-
-```powershell
-.\demo_browser_pass_fail.ps1
-```
-
-To stop server:
-
-```powershell
-.\stop_server.ps1
-```
+1. Trigger `.github/workflows/optimizer_webhook.yml` from the `test-integration` branch.
+2. Check workflow logs for `Health status: 200`.
+3. Check workflow logs for `Webhook HTTP status: 200`.
+4. Open the public tunnel URL `/status-ui` to confirm live PASS/FAIL state.
+5. Stop the local server if you started it for the tunnel.
 
 ## Step 2: Install Dependencies
 Run:
@@ -103,68 +81,7 @@ Expected:
 - Webhook queue is processed
 - Overall result is `PASS`
 
-## Step 6: Manual Demo Ingest And Score
-Run:
-
-```powershell
-$headers = @{ "X-Role" = "operator" }
-$payload = Get-Content "f:\CI-Cd\autonomous-cicd-optimizer\samples\source_event_github.json" -Raw | ConvertFrom-Json
-$ingest = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/ingest/source-event" -Headers $headers -ContentType "application/json" -Body ($payload | ConvertTo-Json -Depth 20)
-$ingest
-$runId = $ingest.run_ids[0]
-$score = Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/score/run/$runId" -Headers $headers
-$score
-```
-
-Expected:
-- `ingested_count` is greater than 0
-- `risk_score` is returned
-- `recommendation` is one of `deploy`, `canary`, `delay`, `block`
-
-## Step 7: Submit Feedback
-Run:
-
-```powershell
-$viewer = @{ "X-Role" = "viewer"; "X-User" = "qa-user" }
-Invoke-RestMethod -Method Post -Uri "http://127.0.0.1:8000/feedback/run/$runId" -Headers $viewer -ContentType "application/json" -Body '{"vote":"up","comment":"demo passed"}'
-```
-
-Expected:
-- Feedback is accepted
-
-## Step 8: Check KPI Output
-Run:
-
-```powershell
-Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/kpis" -Headers @{ "X-Role" = "viewer" }
-```
-
-Expected:
-- KPI values are returned
-
-## Step 9: Test Async Webhook Path
-Run:
-
-```powershell
-f:/CI-Cd/.venv/Scripts/python.exe f:/CI-Cd/autonomous-cicd-optimizer/samples/smoke_webhook.py
-```
-
-Expected:
-- `webhook 200`
-- `processed_ok True`
-- Queue status shows processed events
-
-## Step 10: Test RBAC Rejection
-Run:
-
-```powershell
-Invoke-WebRequest -Uri "http://127.0.0.1:8000/runs" -UseBasicParsing
-```
-
-Expected:
-- Request fails with `403` because `X-Role` header is missing
-
-## Step 11: Open Live Red/Blue Status UI (Real Checks)
+## Step 6: Open Live Red/Blue Status UI (Real Checks)
 Open in browser:
 
 ```text
@@ -183,24 +100,16 @@ Optional JSON output for same checks:
 Invoke-RestMethod -Method Get -Uri "http://127.0.0.1:8000/status/checks"
 ```
 
-## Step 12: Final Success Criteria
+## Step 7: Final Success Criteria
 The system is working properly if all of these are true:
 1. `qa_smoke.ps1` returns `PASS`
 2. `/health` returns 200
-3. Demo payload ingest works
-4. Risk score is generated
-5. Feedback is accepted
-6. KPI data is returned
-7. Webhook queue is processed
-8. Unauthorized calls are rejected
+3. GitHub workflow run reaches the webhook endpoint
+4. Risk score is generated from workflow-driven input
+5. Status UI shows live PASS/FAIL state
+6. Unauthorized calls are rejected
 
-## Step 13: Demo Inputs
-Use these sample files:
-- `samples/source_event_github.json`
-- `samples/source_event_gitlab.json`
-- `samples/source_event_jenkins.json`
-
-## Step 14: Notes
+## Step 8: Notes
 1. Keep the API terminal running while testing.
 2. If the browser says `ERR_CONNECTION_REFUSED`, the server is not running.
 3. Always include `X-Role` in requests when testing secured endpoints.
