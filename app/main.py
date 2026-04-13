@@ -5,7 +5,7 @@ import hashlib
 import hmac
 from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Header, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Header, Request
 from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select, text
@@ -704,7 +704,35 @@ def swagger_ui_redirect() -> HTMLResponse:
 
 @app.post("/ingest/events", response_model=IngestResponse)
 def ingest_normalized_events(
-    payload: list[NormalizedEvent],
+    payload: list[NormalizedEvent] = Body(
+        ...,
+        examples=[
+            [
+                {
+                    "source_system": "github_actions",
+                    "tenant_id": "team-a",
+                    "repository_id": "repo-123",
+                    "pipeline_id": "pipeline-456",
+                    "run_id": "run-789",
+                    "job_id": "job-001",
+                    "stage_name": "build",
+                    "event_type": "job.completed",
+                    "event_ts_utc": "2026-04-13T10:15:30Z",
+                    "duration_ms": 1450,
+                    "status": "success",
+                    "branch": "main",
+                    "commit_sha": "a1b2c3d4e5f6",
+                    "actor": "github-actions[bot]",
+                    "environment": "production",
+                    "retry_count": 0,
+                    "failure_signature": None,
+                    "log_excerpt_hash": "sha256:abc123",
+                    "metadata_version": "v1",
+                    "metadata": {"service": "api", "region": "us-east-1"},
+                }
+            ]
+        ],
+    ),
     _: dict = Depends(require_role({"operator", "admin"})),
     db: Session = Depends(get_db),
 ):
@@ -718,7 +746,30 @@ def ingest_normalized_events(
 
 @app.post("/ingest/source-event", response_model=IngestResponse)
 def ingest_source_event(
-    request: SourceEventRequest,
+    request: SourceEventRequest = Body(
+        ...,
+        examples={
+            "github-actions": {
+                "summary": "GitHub Actions workflow event",
+                "value": {
+                    "source_system": "github_actions",
+                    "payload": {
+                        "workflow_run": {
+                            "id": 123456789,
+                            "name": "CI",
+                            "head_branch": "main",
+                            "head_sha": "a1b2c3d4e5f6",
+                            "conclusion": "success",
+                        },
+                        "repository": {
+                            "full_name": "example-org/example-repo",
+                            "id": 987654321,
+                        },
+                    },
+                },
+            }
+        },
+    ),
     _: dict = Depends(require_role({"operator", "admin"})),
     db: Session = Depends(get_db),
 ):
@@ -783,6 +834,35 @@ def list_assessments(_: dict = Depends(require_role({"viewer", "operator", "admi
 @app.post("/webhooks/github-actions")
 async def github_actions_webhook(
     request: Request,
+    payload: dict[str, Any] = Body(
+        ...,
+        examples={
+            "workflow-completed": {
+                "summary": "GitHub Actions workflow completion payload",
+                "value": {
+                    "repository": "example-org/example-repo",
+                    "ref": "main",
+                    "sha": "a1b2c3d4e5f6",
+                    "run_id": "123456789",
+                    "run_attempt": "1",
+                    "workflow": "CI",
+                    "actor": "octocat",
+                    "event_name": "push",
+                    "status": "completed",
+                    "conclusion": "success",
+                    "jobs": [
+                        {
+                            "name": "send-to-optimizer",
+                            "status": "completed",
+                            "conclusion": "success",
+                            "started_at": "2026-04-13T10:15:30Z",
+                            "completed_at": "2026-04-13T10:15:35Z",
+                        }
+                    ],
+                },
+            }
+        },
+    ),
     _: dict = Depends(require_role({"operator", "admin"})),
 ) -> dict:
     """
@@ -881,19 +961,23 @@ def get_queue_status(_: dict = Depends(require_role({"viewer", "operator", "admi
 @app.post("/feedback/run/{run_id}", response_model=FeedbackResponse)
 def submit_feedback(
     run_id: str,
-    feedback: FeedbackRequest,
+    feedback: FeedbackRequest = Body(
+        ...,
+        examples={
+            "positive": {
+                "summary": "Positive feedback",
+                "value": {
+                    "vote": "up",
+                    "comment": "Build passed after retry.",
+                },
+            }
+        },
+    ),
     x_user: str | None = Header(default="anonymous"),
     _: dict = Depends(require_role({"viewer", "operator", "admin"})),
     db: Session = Depends(get_db),
 ):
-    db.add(
-        RecommendationFeedback(
-            run_id=run_id,
-            vote=feedback.vote,
-            comment=feedback.comment,
-            actor=x_user or "anonymous",
-        )
-    )
+    
     write_audit_log(db, "feedback_submitted", x_user or "anonymous", {"run_id": run_id, "vote": feedback.vote})
     db.commit()
     return FeedbackResponse(run_id=run_id, vote=feedback.vote, actor=x_user or "anonymous")
