@@ -76,14 +76,18 @@ jobs:
           # ====================================================================
           # GitHub Actions secrets can accidentally include whitespace, quotes,
           # or newlines when copy-pasted. This causes malformed URLs and 401 errors.
-          # We normalize by:
-          #   1. Stripping carriage return and newline (\r\n)
-          #   2. Trimming leading/trailing whitespace
-          #   3. Removing leading/trailing double quotes
-          #   4. Removing leading/trailing single quotes
-          
-          OPTIMIZER_BASE_URL_CLEAN=$(printf '%s' "${OPTIMIZER_BASE_URL}" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#^"##' -e 's#"$##' -e "s#^'##" -e "s#'$##")
-          OPTIMIZER_WEBHOOK_PATH_CLEAN=$(printf '%s' "${OPTIMIZER_WEBHOOK_PATH}" | tr -d '\r\n' | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's#^"##' -e 's#"$##' -e "s#^'##" -e "s#'$##")
+          # We normalize by trimming whitespace and stripping a single outer pair of quotes.
+          OPTIMIZER_BASE_URL_CLEAN=$(printf '%s' "${OPTIMIZER_BASE_URL}" | tr -d '\r\n' | xargs)
+          OPTIMIZER_BASE_URL_CLEAN="${OPTIMIZER_BASE_URL_CLEAN#\"}"
+          OPTIMIZER_BASE_URL_CLEAN="${OPTIMIZER_BASE_URL_CLEAN%\"}"
+          OPTIMIZER_BASE_URL_CLEAN="${OPTIMIZER_BASE_URL_CLEAN#\'}"
+          OPTIMIZER_BASE_URL_CLEAN="${OPTIMIZER_BASE_URL_CLEAN%\'}"
+
+          OPTIMIZER_WEBHOOK_PATH_CLEAN=$(printf '%s' "${OPTIMIZER_WEBHOOK_PATH}" | tr -d '\r\n' | xargs)
+          OPTIMIZER_WEBHOOK_PATH_CLEAN="${OPTIMIZER_WEBHOOK_PATH_CLEAN#\"}"
+          OPTIMIZER_WEBHOOK_PATH_CLEAN="${OPTIMIZER_WEBHOOK_PATH_CLEAN%\"}"
+          OPTIMIZER_WEBHOOK_PATH_CLEAN="${OPTIMIZER_WEBHOOK_PATH_CLEAN#\'}"
+          OPTIMIZER_WEBHOOK_PATH_CLEAN="${OPTIMIZER_WEBHOOK_PATH_CLEAN%\'}"
 
           # ====================================================================
           # SECTION 3: URL Format Validation
