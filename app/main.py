@@ -5,7 +5,7 @@ import hashlib
 import hmac
 from typing import Any
 
-from fastapi import Body, Depends, FastAPI, HTTPException, Header, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Header, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select, text
@@ -228,12 +228,17 @@ async def shutdown_event() -> None:
 
 
 @app.get("/health")
-def health() -> dict:
+def health(
+    ts: int | None = Query(default=None, description="Optional cache-buster timestamp for docs/testing."),
+) -> dict:
     return {"status": "ok", "project": settings.app_name}
 
 
 @app.get("/status/checks")
-def status_checks(db: Session = Depends(get_db)) -> dict:
+def status_checks(
+    ts: int | None = Query(default=None, description="Optional cache-buster timestamp for docs/testing."),
+    db: Session = Depends(get_db),
+) -> dict:
     checks = _compute_live_checks(db)
     all_passed = all(item["passed"] for item in checks)
     return {
@@ -245,7 +250,10 @@ def status_checks(db: Session = Depends(get_db)) -> dict:
 
 
 @app.get("/status-ui", response_class=HTMLResponse)
-def status_ui(db: Session = Depends(get_db)) -> str:
+def status_ui(
+    ts: int | None = Query(default=None, description="Optional cache-buster timestamp for docs/testing."),
+    db: Session = Depends(get_db),
+) -> str:
     checks = _compute_live_checks(db)
     all_passed = all(item["passed"] for item in checks)
     overall_class = "overall-pass" if all_passed else "overall-fail"
