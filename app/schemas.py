@@ -75,6 +75,7 @@ class QueueStatusResponse(BaseModel):
     queued: int
     processed: int
     failed: int
+    duplicate_deliveries: int = 0
     last_error: str
 
 

@@ -51,6 +51,7 @@ Use these environment variable names in your local `.env` (never commit real val
 | `APP_NAME` | Display name of service | `Autonomous CI/CD Pipeline Optimizer` |
 | `DATABASE_URL` | Database connection string | `sqlite:///./optimizer.db` |
 | `APP_API_KEY` | Optional API key for protected routes | `change-me` |
+| `GITHUB_WEBHOOK_SECRET` | Optional HMAC secret for webhook signature verification | `change-me-github-secret` |
 | `RISK_BLOCK_THRESHOLD` | Score threshold for `block` | `85` |
 | `RISK_DELAY_THRESHOLD` | Score threshold for `delay` | `70` |
 | `RISK_CANARY_THRESHOLD` | Score threshold for `canary` | `50` |
@@ -106,6 +107,31 @@ Always pass role header:
 
 Optional for feedback attribution:
 - `X-User: your-name`
+
+## GitHub Real Integration (Secrets Only)
+
+Use repository secrets and deployment environment variables only. Never hardcode personal GitHub details, API keys, or tokens in code.
+
+Required GitHub Actions secrets:
+- `OPTIMIZER_BASE_URL`
+- `OPTIMIZER_API_KEY`
+- `OPTIMIZER_ROLE`
+- `OPTIMIZER_WEBHOOK_PATH`
+- `OPTIMIZER_WEBHOOK_SECRET` (required only when server has `GITHUB_WEBHOOK_SECRET` configured)
+
+Hardened webhook behavior:
+- Validates payload shape before queueing
+- Verifies `X-Hub-Signature-256` when `GITHUB_WEBHOOK_SECRET` is configured
+- Skips duplicate deliveries using `X-GitHub-Delivery` idempotency key
+
+Ready workflow template:
+- `.github/workflows/optimizer_webhook.yml`
+
+Full setup guide:
+- `docs/08_GitHub_Integration_Checklist.md`
+
+Post-run verification script:
+- `verify_real_github_integration.ps1`
 
 ## PASS / FAIL Interpretation
 

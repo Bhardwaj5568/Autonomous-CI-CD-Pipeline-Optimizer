@@ -12,6 +12,7 @@ queue_stats = {
     "queued": 0,
     "processed": 0,
     "failed": 0,
+    "duplicate_deliveries": 0,
     "last_error": "",
 }
 

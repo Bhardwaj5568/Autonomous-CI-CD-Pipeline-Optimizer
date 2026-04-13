@@ -1,0 +1,76 @@
+name: Optimizer Webhook Bridge
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+
+jobs:
+  send-to-optimizer:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send workflow event to optimizer
+        env:
+          OPTIMIZER_BASE_URL: ${{ secrets.OPTIMIZER_BASE_URL }}
+          OPTIMIZER_API_KEY: ${{ secrets.OPTIMIZER_API_KEY }}
+          OPTIMIZER_ROLE: ${{ secrets.OPTIMIZER_ROLE }}
+          OPTIMIZER_WEBHOOK_PATH: ${{ secrets.OPTIMIZER_WEBHOOK_PATH }}
+          OPTIMIZER_WEBHOOK_SECRET: ${{ secrets.OPTIMIZER_WEBHOOK_SECRET }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${OPTIMIZER_BASE_URL}" ] || [ -z "${OPTIMIZER_API_KEY}" ] || [ -z "${OPTIMIZER_ROLE}" ] || [ -z "${OPTIMIZER_WEBHOOK_PATH}" ]; then
+            echo "Required secret missing. Check OPTIMIZER_BASE_URL, OPTIMIZER_API_KEY, OPTIMIZER_ROLE, OPTIMIZER_WEBHOOK_PATH"
+            exit 1
+          fi
+
+          TARGET_URL="${OPTIMIZER_BASE_URL}${OPTIMIZER_WEBHOOK_PATH}"
+          DELIVERY_ID="gh-bridge-${{ github.run_id }}-${{ github.run_attempt }}"
+
+          PAYLOAD=$(cat <<EOF
+          {
+            "repository": "${{ github.repository }}",
+            "ref": "${{ github.ref_name }}",
+            "sha": "${{ github.sha }}",
+            "run_id": "${{ github.run_id }}",
+            "run_attempt": "${{ github.run_attempt }}",
+            "workflow": "${{ github.workflow }}",
+            "actor": "${{ github.actor }}",
+            "event_name": "${{ github.event_name }}",
+            "status": "completed",
+            "conclusion": "success",
+            "jobs": [
+              {
+                "name": "send-to-optimizer",
+                "status": "completed",
+                "conclusion": "success",
+                "started_at": "${{ github.run_started_at }}",
+                "completed_at": "${{ github.run_started_at }}"
+              }
+            ]
+          }
+          EOF
+          )
+
+          CURL_ARGS=(
+            --fail
+            --show-error
+            --silent
+            -X POST
+            "$TARGET_URL"
+            -H "Content-Type: application/json"
+            -H "X-API-Key: ${OPTIMIZER_API_KEY}"
+            -H "X-Role: ${OPTIMIZER_ROLE}"
+            -H "X-GitHub-Delivery: ${DELIVERY_ID}"
+            --data "$PAYLOAD"
+          )
+
+          if [ -n "${OPTIMIZER_WEBHOOK_SECRET:-}" ]; then
+            SIGNATURE=$(printf '%s' "$PAYLOAD" | openssl dgst -sha256 -hmac "$OPTIMIZER_WEBHOOK_SECRET" -hex | awk '{print $2}')
+            CURL_ARGS+=( -H "X-Hub-Signature-256: sha256=${SIGNATURE}" )
+          fi
+
+          curl "${CURL_ARGS[@]}"
+
+          echo "Webhook sent to optimizer successfully."

@@ -1,7 +1,11 @@
 import asyncio
+from collections import deque
 from datetime import datetime, timezone
+import hashlib
+import hmac
+from typing import Any
 
-from fastapi import Depends, FastAPI, HTTPException, Header
+from fastapi import Depends, FastAPI, HTTPException, Header, Request
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
@@ -32,6 +36,69 @@ from app.services.scoring import score_and_persist_run
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="Autonomous CI/CD Pipeline Optimizer API", version="0.1.0")
+
+_MAX_GITHUB_DELIVERY_CACHE = 2000
+_github_delivery_ids: set[str] = set()
+_github_delivery_order: deque[str] = deque()
+
+
+def _is_duplicate_github_delivery(delivery_id: str | None) -> bool:
+    if not delivery_id:
+        return False
+
+    if delivery_id in _github_delivery_ids:
+        return True
+
+    _github_delivery_ids.add(delivery_id)
+    _github_delivery_order.append(delivery_id)
+
+    if len(_github_delivery_order) > _MAX_GITHUB_DELIVERY_CACHE:
+        evicted = _github_delivery_order.popleft()
+        _github_delivery_ids.discard(evicted)
+
+    return False
+
+
+def _verify_github_signature(raw_body: bytes, signature_header: str | None) -> bool:
+    if not settings.github_webhook_secret:
+        return True
+
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+
+    provided = signature_header.split("=", 1)[1]
+    expected = hmac.new(
+        key=settings.github_webhook_secret.encode("utf-8"),
+        msg=raw_body,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(provided, expected)
+
+
+def _validate_github_webhook_payload(payload: dict[str, Any]) -> None:
+    run_section = payload.get("workflow_run")
+    run_id = payload.get("run_id")
+    if isinstance(run_section, dict):
+        run_id = run_section.get("id") or run_id
+
+    if run_id is None:
+        raise HTTPException(status_code=422, detail="Missing run identifier: provide workflow_run.id or run_id")
+
+    repository = payload.get("repository")
+    has_repository = False
+    if isinstance(repository, str) and repository.strip():
+        has_repository = True
+    if isinstance(repository, dict) and (repository.get("full_name") or repository.get("id")):
+        has_repository = True
+    if payload.get("repository_id"):
+        has_repository = True
+
+    if not has_repository:
+        raise HTTPException(status_code=422, detail="Missing repository identifier")
+
+    jobs = payload.get("jobs")
+    if jobs is not None and not isinstance(jobs, list):
+        raise HTTPException(status_code=422, detail="Invalid jobs field: expected a list when provided")
 
 
 def _compute_live_checks(db: Session) -> list[dict]:
@@ -102,33 +169,33 @@ def health() -> dict:
 
 @app.get("/status/checks")
 def status_checks(db: Session = Depends(get_db)) -> dict:
-        checks = _compute_live_checks(db)
-        all_passed = all(item["passed"] for item in checks)
-        return {
-                "project": settings.app_name,
-                "all_passed": all_passed,
-                "checks": checks,
-                "queue": queue_stats,
-        }
+    checks = _compute_live_checks(db)
+    all_passed = all(item["passed"] for item in checks)
+    return {
+        "project": settings.app_name,
+        "all_passed": all_passed,
+        "checks": checks,
+        "queue": queue_stats,
+    }
 
 
 @app.get("/status-ui", response_class=HTMLResponse)
 def status_ui(db: Session = Depends(get_db)) -> str:
-        checks = _compute_live_checks(db)
+    checks = _compute_live_checks(db)
     all_passed = all(item["passed"] for item in checks)
     overall_class = "overall-pass" if all_passed else "overall-fail"
     overall_label = "OVERALL PASS" if all_passed else "OVERALL FAIL"
     now_utc = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S UTC")
-        rows = []
-        for item in checks:
-                dot_class = "dot-pass" if item["passed"] else "dot-fail"
-                label = "PASS" if item["passed"] else "FAIL"
-                rows.append(
-                        f"<tr><td><span class='dot {dot_class}'></span> {label}</td><td>{item['name']}</td><td>{item['detail']}</td></tr>"
-                )
+    rows = []
+    for item in checks:
+        dot_class = "dot-pass" if item["passed"] else "dot-fail"
+        label = "PASS" if item["passed"] else "FAIL"
+        rows.append(
+            f"<tr><td><span class='dot {dot_class}'></span> {label}</td><td>{item['name']}</td><td>{item['detail']}</td></tr>"
+        )
 
-        table_rows = "".join(rows)
-        html = f"""
+    table_rows = "".join(rows)
+    html = f"""
 <!doctype html>
 <html>
 <head>
@@ -262,11 +329,41 @@ def list_assessments(_: dict = Depends(require_role({"viewer", "operator", "admi
 
 @app.post("/webhooks/github-actions")
 async def github_actions_webhook(
-    payload: dict,
+    request: Request,
     _: dict = Depends(require_role({"operator", "admin"})),
 ) -> dict:
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Hub-Signature-256")
+    if not _verify_github_signature(raw_body, signature_header):
+        raise HTTPException(status_code=401, detail="Invalid GitHub webhook signature")
+
+    try:
+        payload = await request.json()
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail="Invalid JSON payload") from exc
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Invalid payload: expected a JSON object")
+
+    _validate_github_webhook_payload(payload)
+
+    delivery_id = request.headers.get("X-GitHub-Delivery")
+    if _is_duplicate_github_delivery(delivery_id):
+        queue_stats["duplicate_deliveries"] = queue_stats.get("duplicate_deliveries", 0) + 1
+        return {
+            "queued": False,
+            "duplicate": True,
+            "delivery_id": delivery_id,
+            "source": "github_actions",
+        }
+
     await enqueue_source_payload("github_actions", payload)
-    return {"queued": True, "source": "github_actions"}
+    return {
+        "queued": True,
+        "duplicate": False,
+        "delivery_id": delivery_id,
+        "source": "github_actions",
+    }
 
 
 @app.post("/webhooks/gitlab-ci")
