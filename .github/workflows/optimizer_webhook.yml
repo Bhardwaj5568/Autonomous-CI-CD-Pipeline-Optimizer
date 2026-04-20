@@ -106,11 +106,30 @@ jobs:
           echo "Checking optimizer health endpoint: ${HEALTH_URL}"
           : > /tmp/optimizer_health.txt
 
-          HEALTH_STATUS=$(curl --silent --show-error --output /tmp/optimizer_health.txt --write-out "%{http_code}" "$HEALTH_URL" || true)
-          echo "Health status: ${HEALTH_STATUS}"
+          BASE_HOST=$(printf '%s' "${OPTIMIZER_BASE_URL_CLEAN}" | sed -E 's#^https?://##; s#/.*$##')
+          if [ -z "${BASE_HOST}" ]; then
+            echo "Could not parse host from OPTIMIZER_BASE_URL."
+            exit 1
+          fi
+
+          if ! getent hosts "${BASE_HOST}" >/dev/null 2>&1; then
+            echo "DNS lookup failed for host: ${BASE_HOST}"
+            echo "Tip: If you are using a trycloudflare tunnel, start a fresh tunnel and update OPTIMIZER_BASE_URL secret."
+            exit 1
+          fi
+
+          HEALTH_STATUS="000"
+          for attempt in 1 2 3 4 5; do
+            HEALTH_STATUS=$(curl --silent --show-error --output /tmp/optimizer_health.txt --write-out "%{http_code}" "$HEALTH_URL" || true)
+            echo "Health status attempt ${attempt}: ${HEALTH_STATUS}"
+            if [ "${HEALTH_STATUS}" = "200" ]; then
+              break
+            fi
+            sleep 5
+          done
 
           if [ "${HEALTH_STATUS}" != "200" ]; then
-            echo "Health check failed. Response body:"
+            echo "Health check failed after retries. Response body:"
             cat /tmp/optimizer_health.txt || true
             exit 1
           fi
