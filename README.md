@@ -179,6 +179,74 @@ Required GitHub Actions secrets:
 - `OPTIMIZER_WEBHOOK_PATH`
 - `OPTIMIZER_WEBHOOK_SECRET` (required only when server has `GITHUB_WEBHOOK_SECRET` configured)
 
+### GitHub Secret Source Guide (What to set and where it comes from)
+
+| Secret | What it is | Where to get it | Must match server env? | Example |
+|---|---|---|---|---|
+| `OPTIMIZER_BASE_URL` | Public base URL of optimizer API | Production domain OR temporary tunnel URL | No direct one-to-one env var, but must point to live API host | `https://your-domain.com` |
+| `OPTIMIZER_API_KEY` | API key sent as `X-API-Key` | You generate this value | Yes, must equal `APP_API_KEY` | `change-me-very-long-random` |
+| `OPTIMIZER_ROLE` | Role sent as `X-Role` | You choose allowed role | Must be one of app roles (`viewer`/`operator`/`admin`) | `operator` |
+| `OPTIMIZER_WEBHOOK_PATH` | Target webhook path | Fixed by API route | Must match existing route | `/webhooks/github-actions` |
+| `OPTIMIZER_WEBHOOK_SECRET` | HMAC secret for signature | You generate this value | Yes, must equal `GITHUB_WEBHOOK_SECRET` when signature validation is enabled | `change-me-webhook-secret` |
+
+### Minimum Server Environment Mapping
+
+Set these on server/deployment side:
+1. `APP_API_KEY` = same value as `OPTIMIZER_API_KEY`
+2. `GITHUB_WEBHOOK_SECRET` = same value as `OPTIMIZER_WEBHOOK_SECRET` (if enabled)
+3. `APP_NAME`, `DATABASE_URL`, and risk thresholds as needed
+
+### Where to configure GitHub Secrets
+
+In your target GitHub repository:
+1. Open `Settings`
+2. Open `Secrets and variables` -> `Actions`
+3. Add repository secrets with exact names listed above
+
+### Temporary Public URL Setup (Cloudflare Quick Tunnel)
+
+Use this when your API is local and not publicly reachable.
+
+Prerequisite:
+1. Local API is running on `http://127.0.0.1:8000`
+
+Steps:
+1. Install cloudflared (once)
+2. Start tunnel:
+
+```powershell
+cloudflared tunnel --url http://127.0.0.1:8000
+```
+
+3. Copy generated URL (example: `https://xxxx.trycloudflare.com`)
+4. Set `OPTIMIZER_BASE_URL` to that URL in GitHub Actions secrets
+5. Validate URL quickly:
+
+```powershell
+Invoke-RestMethod -Uri "https://xxxx.trycloudflare.com/health" -Method Get
+```
+
+6. Trigger workflow run in GitHub Actions
+
+Important:
+1. Quick tunnel URLs are temporary and change when tunnel restarts
+2. If workflow shows DNS error, start a new tunnel and update `OPTIMIZER_BASE_URL`
+3. Keep tunnel process running during workflow execution
+
+### Temporary Public URL Setup (ngrok Alternative)
+
+If you prefer ngrok:
+1. Start API locally on `http://127.0.0.1:8000`
+2. Start tunnel:
+
+```powershell
+ngrok http 8000
+```
+
+3. Copy HTTPS forwarding URL from ngrok console
+4. Set `OPTIMIZER_BASE_URL` to that URL in GitHub secrets
+5. Validate `/health` and trigger workflow
+
 Hardened webhook behavior:
 - Validates payload shape before queueing
 - Verifies `X-Hub-Signature-256` when `GITHUB_WEBHOOK_SECRET` is configured
