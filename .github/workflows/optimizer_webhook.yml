@@ -262,6 +262,8 @@ jobs:
             --show-error
             --output /tmp/optimizer_webhook_response.txt
             --write-out "%{http_code}"
+            --connect-timeout 10
+            --max-time 40
             -X POST
             "$TARGET_URL"
             -H "Content-Type: application/json"
@@ -277,14 +279,35 @@ jobs:
             CURL_ARGS+=( -H "X-Hub-Signature-256: sha256=${SIGNATURE}" )
           fi
 
-          # Send webhook request.
-          HTTP_STATUS=$(curl "${CURL_ARGS[@]}")
-          echo "Webhook HTTP status: ${HTTP_STATUS}"
+          # Send webhook request with retry for transient tunnel/network failures.
+          # Cloudflare quick tunnels can intermittently return 524/522/503 even when /health is healthy.
+          HTTP_STATUS="000"
+          for attempt in 1 2 3 4; do
+            HTTP_STATUS=$(curl "${CURL_ARGS[@]}" || true)
+            echo "Webhook HTTP status attempt ${attempt}: ${HTTP_STATUS}"
 
-          # Fail on non-2xx response.
+            if [ "${HTTP_STATUS}" -ge 200 ] && [ "${HTTP_STATUS}" -lt 300 ]; then
+              break
+            fi
+
+            if [ "${HTTP_STATUS}" = "524" ] || [ "${HTTP_STATUS}" = "522" ] || [ "${HTTP_STATUS}" = "503" ] || [ "${HTTP_STATUS}" = "000" ]; then
+              echo "Transient connectivity/tunnel error (${HTTP_STATUS}). Retrying in 8 seconds..."
+              sleep 8
+              continue
+            fi
+
+            # Non-retryable error (e.g., 401/403/404/422) -> fail immediately.
+            break
+          done
+
+          # Fail on non-2xx response after retries.
           if [ "${HTTP_STATUS}" -lt 200 ] || [ "${HTTP_STATUS}" -ge 300 ]; then
-            echo "Webhook call failed. Response body:"
+            echo "Webhook call failed after retry attempts. Final status: ${HTTP_STATUS}"
+            echo "Response body:"
             cat /tmp/optimizer_webhook_response.txt || true
+            if [ "${HTTP_STATUS}" = "524" ]; then
+              echo "Tip: 524 usually indicates Cloudflare tunnel origin timeout. Keep tunnel process active and retry the workflow."
+            fi
             exit 1
           fi
 
