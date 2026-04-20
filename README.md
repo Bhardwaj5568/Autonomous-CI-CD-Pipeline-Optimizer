@@ -3,11 +3,12 @@
 A runnable MVP backend scaffold with:
 - Canonical CI/CD event ingestion
 - Source mappers for GitHub Actions, GitLab CI, and Jenkins
-- Rule-based release risk scoring (Deploy/Canary/Delay/Block)
+- Context-aware release risk scoring (Deploy/Canary/Delay/Block)
 - SQLite persistence for local development
 - Async webhook queue processing
 - RBAC-style role checks and optional API key authentication
 - Audit logs, feedback loop, and KPI endpoints
+- Dynamic Swagger request examples from latest GitHub webhook payload
 
 ## Problem It Solves
 
@@ -42,6 +43,49 @@ Data flow:
 4. Scoring engine computes run risk and recommendation.
 5. Results are exposed via APIs, status UI, KPI endpoints, and audit logs.
 
+## MVP Architecture (Current)
+
+Core runtime components:
+1. Ingestion Layer
+- Webhook and API endpoints receive source and normalized events.
+- Source payloads are validated and deduplicated before queueing.
+
+2. Processing Layer
+- Queue worker normalizes events through source mappers.
+- Events and runs are persisted to database entities.
+
+3. Intelligence Layer
+- Risk scoring uses base signals plus context (branch/environment) and recent trend.
+- Recommendations are generated from configurable thresholds.
+
+4. Experience and Operations Layer
+- Swagger docs and status UI support live operational verification.
+- KPI and audit endpoints expose reliability and governance signals.
+
+Architecture assets:
+- `docs/mvp-architecture.mmd`
+- `docs/mvp-architecture.svg`
+- `docs/mvp-architecture.png`
+
+## Risk Scoring Model (Current)
+
+Current risk score combines:
+1. Base signals
+- failed events
+- retry count
+- max stage duration
+- total run duration
+
+2. Context signals
+- branch criticality (`feature` vs `main`/`release`)
+- environment criticality (`dev`/`staging`/`production`)
+
+3. Trend signal
+- recent run comparison for the same repository and pipeline
+
+4. Explainability
+- response includes `reasons.summary`, `factor_breakdown`, `trend`, and `confidence_components`
+
 ## Configuration (Non-Secret)
 
 Use these environment variable names in your local `.env` (never commit real values):
@@ -59,6 +103,12 @@ Use these environment variable names in your local `.env` (never commit real val
 | `RISK_CANARY_THRESHOLD` | Score threshold for `canary` | `50` |
 
 ## Quick Start
+
+Run commands from project folder:
+
+```powershell
+Set-Location F:/CI-Cd/autonomous-cicd-optimizer
+```
 
 1. Install dependencies:
 
@@ -184,11 +234,24 @@ Run the full project smoke test from PowerShell:
 Use GitHub Actions as the only production input path.
 
 1. Trigger `.github/workflows/optimizer_webhook.yml` from the `main` branch.
-2. Confirm the workflow log shows `Health status: 200`.
-3. Confirm the workflow log shows `Webhook HTTP status: 200`.
-4. Open `/status/checks` and `/status-ui` on the public tunnel URL to confirm live PASS/FAIL status.
+2. Confirm the workflow log shows DNS resolution passed for your configured host.
+3. Confirm health-check retries end with `Health status attempt <n>: 200`.
+4. Confirm the workflow log shows `Webhook HTTP status: 200`.
+5. Open `/status/checks` and `/status-ui` on the public tunnel URL to confirm live PASS/FAIL status.
+
+If workflow fails with DNS lookup error:
+1. Start a fresh Cloudflare quick tunnel.
+2. Update `OPTIMIZER_BASE_URL` secret to the new tunnel URL.
+3. Re-run workflow.
 
 If you need to change the observed output, edit the payload fields inside `.github/workflows/optimizer_webhook.yml` and rerun the workflow.
+
+## Swagger Live Testing (Current)
+
+For `POST /webhooks/github-actions`, `POST /ingest/source-event`, and `POST /ingest/events`:
+1. Submit a real webhook payload once.
+2. Refresh `/docs`.
+3. Request body examples reflect the latest received payload (with safe fallback if none has been received).
 
 ## Known Limitations (Current Build)
 
