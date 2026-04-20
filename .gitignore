@@ -5,3 +5,7 @@ __pycache__/
 *.pyd
 optimizer.db
 .venv/
+.npm-cache/
+~$*.docx
+PRESENTATION_SPEECH_SCRIPT.txt
+PROJECT_PRESENTATION.md

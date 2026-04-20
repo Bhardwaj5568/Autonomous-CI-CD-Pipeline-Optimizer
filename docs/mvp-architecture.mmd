@@ -1,0 +1,135 @@
+flowchart TB
+  %% ============================================================
+  %% Autonomous CI/CD Pipeline Optimizer - MVP Architecture
+  %% Layered view: Sources -> API Gateway -> Processing -> Data -> Outputs
+  %% ============================================================
+
+  %% -------------------- LAYER 1: EXTERNAL SOURCES --------------------
+  subgraph L1[External CI CD Sources]
+    GH[GitHub Actions\nWorkflow Runs + Webhooks]
+    GL[GitLab CI\nPipeline Events]
+    JK[Jenkins\nBuild/Job Events]
+  end
+
+  %% -------------------- LAYER 2: API + SECURITY --------------------
+  subgraph L2[FastAPI Ingress and Security Layer]
+    DOCS[/Swagger UI: /docs/]
+    AUTH[RBAC and API Key Guard\nX-Role: viewer, operator, admin\nX-API-Key optional]
+
+    WH_GH[POST /webhooks/github-actions]
+    WH_GL[POST /webhooks/gitlab-ci]
+    WH_JK[POST /webhooks/jenkins]
+
+    ING_SRC[POST /ingest/source-event]
+    ING_EVT[POST /ingest/events]
+    SCORE[POST score run id]
+    FEED[POST feedback run id]
+  end
+
+  %% -------------------- LAYER 3: PROCESSING CORE --------------------
+  subgraph L3[Processing and Intelligence Layer]
+    FACTORY[Connector Factory]
+    MAP_GH[GitHub Mapper]
+    MAP_GL[GitLab Mapper]
+    MAP_JK[Jenkins Mapper]
+
+    NORM[Canonical Event Normalization]
+    QUEUE[(Async Event Queue)]
+    WORKER[Queue Worker Loop]
+    SCORING[Risk Scoring Engine\nDeploy, Canary, Delay, Block]
+    AUDIT[Audit Service]
+    METRICS[Metrics Aggregator]
+  end
+
+  %% -------------------- LAYER 4: PERSISTENCE --------------------
+  subgraph L4[Persistence Layer SQLite]
+    DB[(optimizer.db)]
+    RUNS[(PipelineRun)]
+    ASSESS[(RiskAssessment)]
+    FDBK[(RecommendationFeedback)]
+    LOGS[(AuditLog)]
+  end
+
+  %% -------------------- LAYER 5: READ/APPLICATION OUTPUTS --------------------
+  subgraph L5[Monitoring and Consumption Layer]
+    HEALTH[GET /health]
+    STATUS[GET /status/checks]
+    UI[GET /status-ui]
+    QR[GET /queue/status]
+    RUNS_EP[GET /runs]
+    ASSESS_EP[GET /assessments]
+    KPIS[GET /kpis]
+    AUDIT_EP[GET /audit-logs admin]
+  end
+
+  %% -------------------- SOURCE TO INGRESS --------------------
+  GH --> WH_GH
+  GL --> WH_GL
+  JK --> WH_JK
+
+  %% Swagger access path
+  DOCS --> WH_GH
+  DOCS --> WH_GL
+  DOCS --> WH_JK
+  DOCS --> ING_SRC
+  DOCS --> ING_EVT
+  DOCS --> SCORE
+  DOCS --> FEED
+
+  %% -------------------- SECURITY GATE --------------------
+  WH_GH --> AUTH
+  WH_GL --> AUTH
+  WH_JK --> AUTH
+  ING_SRC --> AUTH
+  ING_EVT --> AUTH
+  SCORE --> AUTH
+  FEED --> AUTH
+
+  %% -------------------- NORMALIZATION + QUEUE --------------------
+  AUTH --> FACTORY
+  FACTORY --> MAP_GH
+  FACTORY --> MAP_GL
+  FACTORY --> MAP_JK
+
+  MAP_GH --> NORM
+  MAP_GL --> NORM
+  MAP_JK --> NORM
+
+  NORM --> QUEUE
+  QUEUE --> WORKER
+  WORKER --> SCORING
+  WORKER --> AUDIT
+  WORKER --> METRICS
+
+  %% -------------------- STORAGE --------------------
+  SCORING --> DB
+  AUDIT --> DB
+  METRICS --> DB
+
+  DB --- RUNS
+  DB --- ASSESS
+  DB --- FDBK
+  DB --- LOGS
+
+  %% -------------------- READ ENDPOINTS --------------------
+  DB --> HEALTH
+  DB --> STATUS
+  DB --> UI
+  QUEUE --> QR
+  DB --> RUNS_EP
+  DB --> ASSESS_EP
+  DB --> KPIS
+  DB --> AUDIT_EP
+
+  %% -------------------- STYLING --------------------
+  classDef source fill:#e3f2fd,stroke:#0d47a1,stroke-width:1.2px,color:#0b1f33;
+  classDef ingress fill:#e8f5e9,stroke:#1b5e20,stroke-width:1.2px,color:#102914;
+  classDef processing fill:#fff8e1,stroke:#e65100,stroke-width:1.2px,color:#3a2300;
+  classDef data fill:#f3e5f5,stroke:#6a1b9a,stroke-width:1.2px,color:#2a0d3a;
+  classDef output fill:#fce4ec,stroke:#ad1457,stroke-width:1.2px,color:#3a0c20;
+
+  class GH,GL,JK source;
+  class DOCS,AUTH,WH_GH,WH_GL,WH_JK,ING_SRC,ING_EVT,SCORE,FEED ingress;
+  class FACTORY,MAP_GH,MAP_GL,MAP_JK,NORM,QUEUE,WORKER,SCORING,AUDIT,METRICS processing;
+  class DB,RUNS,ASSESS,FDBK,LOGS data;
+  class HEALTH,STATUS,UI,QR,RUNS_EP,ASSESS_EP,KPIS,AUDIT_EP output;

@@ -1,0 +1,367 @@
+Autonomous CI/CD Pipeline Optimizer - Complete Project Overview
+
+1) Project Summary
+This project is an API-first MVP that improves CI/CD release decisions by converting raw pipeline events into risk-aware deployment recommendations.
+It ingests events from GitHub Actions, GitLab CI, and Jenkins, normalizes them into a canonical format, computes a run-level risk score, and returns one of four recommendations:
+- deploy
+- canary
+- delay
+- block
+
+Primary goal:
+Reduce deployment risk and improve release confidence using explainable, auditable, and testable logic.
+
+
+2) Problem It Solves
+Common delivery pain points in engineering teams:
+- Pipeline failures are handled reactively after incidents.
+- Go/no-go deployment decisions are often manual and inconsistent.
+- CI/CD telemetry is fragmented across different systems.
+- Teams lack a unified risk signal before release.
+- Operational visibility and auditability are limited.
+
+How this MVP addresses those problems:
+- Standardizes multi-source CI/CD data.
+- Produces a consistent risk score and recommendation per run.
+- Exposes health, status, KPI, and audit endpoints.
+- Adds secure webhook intake and role-based access controls.
+
+
+3) High-Level Architecture
+A) Input Layer
+- Webhooks and APIs receive events from CI/CD sources.
+
+B) Normalization Layer
+- Source mappers transform source-specific payloads to a canonical event schema.
+
+C) Processing Layer
+- Events are ingested and persisted.
+- Runs are aggregated (duration, event count, status).
+- Risk scoring runs and stores assessments.
+
+D) Output Layer
+- APIs return runs, assessments, queue status, KPIs, and audit logs.
+- Status UI provides operational pass/fail dashboard.
+
+
+4) Technology Stack
+Backend:
+- Python
+- FastAPI
+- SQLAlchemy
+
+Data:
+- SQLite (MVP default)
+
+Operational Interface:
+- Swagger/OpenAPI docs at /docs
+- Custom HTML status dashboard at /status-ui
+
+
+5) Core Data Entities
+- PipelineRun: run-level aggregate record
+- PipelineEvent: normalized per-event record
+- RiskAssessment: risk score + recommendation + confidence + reasons
+- RecommendationFeedback: user vote and optional comment
+- AuditLog: immutable action trail
+
+
+6) Event Sources Supported
+- GitHub Actions
+- GitLab CI
+- Jenkins
+
+Each source has a dedicated mapper, allowing source-specific payload handling while preserving a common canonical output.
+
+
+7) Ingestion and Processing Flow
+1. Event arrives via:
+   - POST /ingest/events (already normalized)
+   - POST /ingest/source-event (source payload)
+   - POST /webhooks/* endpoints (source webhooks)
+2. Payload is validated.
+3. Source mapper creates normalized events (when needed).
+4. Deduping logic prevents duplicate event inserts.
+5. Events are stored in pipeline_events.
+6. Runs are aggregated/updated in pipeline_runs.
+7. Risk scoring computes and stores assessment in risk_assessments.
+8. Audit logs are written for traceability.
+
+
+8) Risk Scoring Logic
+Scoring is deterministic and rule-based (explainable and easy to tune).
+
+Inputs considered:
+- failed event count
+- retry count
+- max stage/job duration
+- total run duration
+
+Score range:
+- 0 to 100 (capped)
+
+Recommendation thresholds:
+- score >= block threshold (default 85) => block
+- score >= delay threshold (default 70) => delay
+- score >= canary threshold (default 50) => canary
+- otherwise => deploy
+
+Confidence:
+- Derived from event volume and capped at 0.95
+
+Output reasons include:
+- failed_events
+- retry_events
+- max_stage_duration_ms
+- total_run_duration_ms
+- status_counts
+
+
+9) Security and Access Control
+A) API Key (optional)
+- If APP_API_KEY is set, X-API-Key must match.
+
+B) Role-Based Access Control (mandatory role header)
+- X-Role required for protected endpoints.
+- Roles:
+  - viewer: read operations
+  - operator: operational actions (ingest, webhooks, scoring)
+  - admin: full access including audit logs
+
+C) GitHub Webhook Signature Verification
+- HMAC-SHA256 via X-Hub-Signature-256
+- Uses timing-safe comparison
+- If webhook secret is configured and signature fails, request is rejected
+
+D) Duplicate Delivery Protection
+- Uses X-GitHub-Delivery id cache with bounded FIFO size
+- Prevents reprocessing of duplicate deliveries
+
+
+10) Queue and Async Processing
+- Webhook/source payloads are placed onto an async queue.
+- Background worker consumes queue items and processes them.
+- queue_stats tracks:
+  - queued
+  - processed
+  - failed
+  - duplicate_deliveries
+  - last_error
+
+Benefits:
+- Fast webhook acknowledgement
+- Better resilience under burst traffic
+- Decoupled request handling and heavy processing
+
+
+11) Main API Surface
+Health and Status:
+- GET /health
+- GET /status/checks
+- GET /status-ui
+
+Ingestion and Scoring:
+- POST /ingest/events
+- POST /ingest/source-event
+- POST /score/run/{run_id}
+- POST /webhooks/github-actions
+- POST /webhooks/gitlab-ci
+- POST /webhooks/jenkins
+
+Observability and Governance:
+- GET /queue/status
+- GET /runs
+- GET /assessments
+- GET /kpis
+- GET /audit-logs (admin)
+
+Feedback:
+- POST /feedback/run/{run_id}
+
+
+12) Status and Operational Checks
+/status/checks computes live runtime checks such as:
+- API process active
+- Background worker running
+- Database connection healthy
+- Pipeline runs available
+- Risk assessments available
+- Queue error free
+
+/status-ui renders these checks with an OVERALL PASS or OVERALL FAIL indicator and refreshes periodically.
+
+
+13) KPI and Feedback Layer
+KPIs provided:
+- total runs
+- average pipeline duration
+- total assessments
+- average risk score
+- high risk rate percent
+- feedback total
+- feedback positive percent
+
+Feedback endpoint allows operators/viewers/admins to submit thumbs up/down on run recommendations.
+This supports recommendation quality tracking and governance.
+
+
+14) Why This MVP Approach Is Strong
+- Practical: built for real CI/CD event flows
+- Explainable: rule-based scoring is manager-friendly
+- Secure: role checks + optional API key + webhook signatures
+- Observable: status, queue, KPI, and audit endpoints
+- Extensible: add new CI sources by adding new mapper
+
+
+15) Current MVP Limitations
+- Queue stats are in-memory and reset on restart.
+- Default database is SQLite (good for local/MVP, not production scale).
+- Scoring is heuristic/rule-based (not ML-adaptive yet).
+- Historical analytics are basic compared to full observability platforms.
+
+
+16) Suggested Production Evolution Path
+- Move from SQLite to managed relational DB (for scale/reliability).
+- Externalize queue to robust broker (Redis/RabbitMQ).
+- Add multi-worker processing and retry/backoff policy.
+- Add threshold profiles per team/repository/environment.
+- Add richer historical dashboards and trend analysis.
+- Introduce model-assisted scoring after sufficient labeled feedback.
+
+
+17) One-Line Executive Pitch
+Autonomous CI/CD Pipeline Optimizer is a secure, explainable, API-first decision-support layer that transforms raw CI/CD events into actionable risk recommendations to improve release reliability and operational confidence.
+
+
+18) Topic-Wise Practical Examples
+
+A) Ingestion Example
+Scenario:
+- A GitHub Actions workflow completes and sends a webhook payload.
+
+Example request:
+- Endpoint: POST /webhooks/github-actions
+- Payload includes: run_id, repository, jobs, status, conclusion
+
+What happens:
+1. Payload is accepted and queued.
+2. Source mapper converts it to canonical normalized events.
+3. Events are persisted and linked to a run.
+
+
+B) Normalization Example
+Scenario:
+- GitHub and Jenkins send different field names for the same concept.
+
+Example mapping:
+- GitHub field: workflow_run.id
+- Jenkins field: build.number
+- Canonical field: run_id
+
+Why it matters:
+- Scoring and reporting become source-agnostic.
+
+
+C) Risk Scoring Example
+Scenario:
+- A pipeline run has 2 failed events, 1 retry, and high duration.
+
+Illustrative result:
+- risk_score: 58
+- recommendation: canary
+- confidence: 0.67
+- reasons: failed_events, retry_events, max_stage_duration_ms
+
+Interpretation:
+- Deployment is possible but safer with gradual rollout.
+
+
+D) Security Example
+Scenario:
+- Request sent without X-Role header.
+
+Expected response:
+- HTTP 403
+- detail: Role header is required
+
+What this proves:
+- Protected endpoints enforce RBAC consistently.
+
+
+E) Webhook Signature Verification Example
+Scenario:
+- GitHub webhook sent with invalid X-Hub-Signature-256.
+
+Expected response:
+- HTTP 401
+- detail indicates invalid webhook signature
+
+Why it matters:
+- Prevents spoofed webhook payloads from untrusted sources.
+
+
+F) Duplicate Delivery Example
+Scenario:
+- Same X-GitHub-Delivery id arrives again due to retry.
+
+Expected behavior:
+- Request is recognized as duplicate.
+- System does not reprocess the same delivery.
+
+Why it matters:
+- Avoids duplicate scoring and inflated metrics.
+
+
+G) Queue Processing Example
+Scenario:
+- 50 webhook events arrive in a short burst.
+
+Expected behavior:
+- API acknowledges quickly.
+- Background worker processes events asynchronously.
+- queue_stats reflects queued, processed, failed counts.
+
+Why it matters:
+- Better reliability and responsiveness under load.
+
+
+H) KPI Example
+Scenario:
+- Team wants weekly operational quality snapshot.
+
+Example metrics from GET /kpis:
+- total_runs: 320
+- avg_risk_score: 41.8
+- high_risk_rate_percent: 14.2
+- feedback_positive_percent: 82.5
+
+Interpretation:
+- Overall trend is healthy, with manageable high-risk proportion.
+
+
+I) Status Dashboard Example
+Scenario:
+- Ops team opens /status-ui before release window.
+
+Observed output:
+- OVERALL PASS
+- Worker running, database healthy, queue error free
+
+Release implication:
+- Platform runtime checks are healthy for planned deployment.
+
+
+J) Audit Trail Example
+Scenario:
+- Manager asks: who triggered scoring and feedback updates?
+
+Source:
+- GET /audit-logs (admin)
+
+Expected entries:
+- action_type: auto_scoring or feedback_submitted
+- actor: queue-worker or user header
+- details: run_id, score, recommendation, vote
+
+Why it matters:
+- Strong traceability for governance and post-incident review.
