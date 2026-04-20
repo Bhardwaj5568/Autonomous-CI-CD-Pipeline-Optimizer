@@ -1,4 +1,5 @@
 import asyncio
+from copy import deepcopy
 from collections import deque
 from datetime import datetime, timezone, timedelta
 import hashlib
@@ -7,11 +8,13 @@ from typing import Any
 
 from fastapi import Body, Depends, FastAPI, HTTPException, Header, Query, Request
 from fastapi.openapi.docs import get_swagger_ui_html, get_swagger_ui_oauth2_redirect_html
+from fastapi.openapi.utils import get_openapi
 from fastapi.responses import HTMLResponse
 from sqlalchemy import func, select, text
 from sqlalchemy.orm import Session
 
 from app.auth import require_role
+from app.connectors.github_actions import GitHubActionsMapper
 from app.connectors.factory import get_mapper
 from app.config import settings
 from app.database import Base, engine, get_db
@@ -55,6 +58,186 @@ app = FastAPI(
 _MAX_GITHUB_DELIVERY_CACHE = 2000
 _github_delivery_ids: set[str] = set()
 _github_delivery_order: deque[str] = deque()
+
+_MAX_GITLAB_DELIVERY_CACHE = 2000
+_gitlab_delivery_ids: set[str] = set()
+_gitlab_delivery_order: deque[str] = deque()
+
+_MAX_JENKINS_DELIVERY_CACHE = 2000
+_jenkins_delivery_ids: set[str] = set()
+_jenkins_delivery_order: deque[str] = deque()
+
+_latest_github_actions_payload: dict[str, Any] | None = None
+
+
+_GITHUB_ACTIONS_FALLBACK_PAYLOAD: dict[str, Any] = {
+    "repository": "example-org/example-repo",
+    "repository_id": "987654321",
+    "repository_owner": "example-org",
+    "repository_owner_id": "11111111",
+    "repository_visibility": "public",
+    "repository_url": "https://github.com/example-org/example-repo",
+    "branch": "main",
+    "ref": "refs/heads/main",
+    "ref_name": "main",
+    "ref_type": "branch",
+    "default_branch": "main",
+    "sha": "a1b2c3d4e5f6",
+    "commit_sha": "a1b2c3d4e5f6",
+    "run_id": "123456789",
+    "run_number": "42",
+    "run_attempt": "1",
+    "workflow": "CI",
+    "workflow_ref": "example-org/example-repo/.github/workflows/ci.yml@refs/heads/main",
+    "workflow_sha": "a1b2c3d4e5f6",
+    "actor": "octocat",
+    "actor_id": "22222222",
+    "triggering_actor": "octocat",
+    "event_name": "push",
+    "event_action": "",
+    "server_url": "https://github.com",
+    "api_url": "https://api.github.com",
+    "graphql_url": "https://api.github.com/graphql",
+    "delivery_id": "gh-bridge-123456789-1",
+    "status": "completed",
+    "conclusion": "success",
+    "started_at": "2026-04-13T10:15:30Z",
+    "completed_at": "2026-04-13T10:15:35Z",
+    "commit": {
+        "sha": "a1b2c3d4e5f6",
+        "message": "Demo commit",
+        "author": "octocat",
+        "compare_url": "https://github.com/example-org/example-repo/compare/a1b2c3d4e5f6...HEAD",
+    },
+    "pull_request": {
+        "number": None,
+        "title": None,
+        "base_ref": None,
+        "head_ref": None,
+    },
+    "release": {
+        "tag_name": None,
+        "name": None,
+        "prerelease": False,
+        "published_at": None,
+    },
+    "workflow_run": {
+        "id": 123456789,
+        "workflow_id": 42,
+        "run_attempt": 1,
+        "head_branch": "main",
+        "head_sha": "a1b2c3d4e5f6",
+        "event": "push",
+        "status": "completed",
+        "conclusion": "success",
+        "repository_id": "987654321",
+        "created_at": "2026-04-13T10:15:30Z",
+        "updated_at": "2026-04-13T10:15:35Z",
+    },
+    "jobs": [
+        {
+            "id": "send-to-optimizer",
+            "name": "send-to-optimizer",
+            "status": "completed",
+            "conclusion": "success",
+            "started_at": "2026-04-13T10:15:30Z",
+            "completed_at": "2026-04-13T10:15:35Z",
+            "run_attempt": 1,
+            "duration_ms": 0,
+            "runner": {"os": "ubuntu-latest"},
+        }
+    ],
+}
+
+
+def _fallback_github_actions_payload() -> dict[str, Any]:
+    return deepcopy(_GITHUB_ACTIONS_FALLBACK_PAYLOAD)
+
+
+def _current_github_actions_payload() -> dict[str, Any]:
+    if _latest_github_actions_payload:
+        payload = deepcopy(_latest_github_actions_payload)
+    else:
+        payload = _fallback_github_actions_payload()
+
+    workflow_run = payload.get("workflow_run") if isinstance(payload.get("workflow_run"), dict) else {}
+    payload.setdefault("branch", payload.get("ref_name") or workflow_run.get("head_branch") or "main")
+    payload.setdefault("ref_name", payload.get("branch") or workflow_run.get("head_branch") or "main")
+    payload.setdefault("ref", payload.get("ref") or f"refs/heads/{payload.get('branch') or workflow_run.get('head_branch') or 'main'}")
+    payload.setdefault("commit_sha", payload.get("sha") or workflow_run.get("head_sha") or "unknown")
+    payload.setdefault("repository_id", payload.get("repository_id") or workflow_run.get("repository_id") or "unknown")
+    payload.setdefault("run_id", payload.get("run_id") or str(workflow_run.get("id") or "unknown"))
+    payload.setdefault("run_attempt", payload.get("run_attempt") or str(workflow_run.get("run_attempt") or "1"))
+    return payload
+
+
+def _current_ingest_events_example() -> list[dict[str, Any]]:
+    payload = _current_github_actions_payload()
+    normalized_events = GitHubActionsMapper().map_to_normalized_events(payload)
+    return [event.model_dump(mode="json") for event in normalized_events]
+
+
+def _github_source_event_example() -> dict[str, Any]:
+    return {
+        "source_system": "github_actions",
+        "payload": _current_github_actions_payload(),
+    }
+
+
+def _update_openapi_examples(schema: dict[str, Any]) -> dict[str, Any]:
+    try:
+        paths = schema.get("paths", {})
+
+        github_route = paths.get("/webhooks/github-actions", {})
+        github_post = github_route.get("post", {})
+        github_request = github_post.get("requestBody", {})
+        github_content = github_request.get("content", {}).get("application/json", {})
+        github_content["example"] = _current_github_actions_payload()
+        github_content.setdefault("examples", {})["workflow-completed"] = {
+            "summary": "Live GitHub workflow payload from the latest run",
+            "value": _current_github_actions_payload(),
+        }
+
+        source_route = paths.get("/ingest/source-event", {})
+        source_post = source_route.get("post", {})
+        source_request = source_post.get("requestBody", {})
+        source_content = source_request.get("content", {}).get("application/json", {})
+        source_content["example"] = _github_source_event_example()
+        source_content.setdefault("examples", {})["github-actions-live"] = {
+            "summary": "Live GitHub source-event payload from the latest run",
+            "value": _github_source_event_example(),
+        }
+
+        ingest_route = paths.get("/ingest/events", {})
+        ingest_post = ingest_route.get("post", {})
+        ingest_request = ingest_post.get("requestBody", {})
+        ingest_content = ingest_request.get("content", {}).get("application/json", {})
+        ingest_content["example"] = _current_ingest_events_example()
+        ingest_content.setdefault("examples", {})["github-actions-live"] = {
+            "summary": "Live normalized events derived from the latest GitHub payload",
+            "value": _current_ingest_events_example(),
+        }
+    except Exception:
+        return schema
+
+    return schema
+
+
+def custom_openapi() -> dict[str, Any]:
+    if app.openapi_schema:
+        return app.openapi_schema
+
+    schema = get_openapi(
+        title=app.title,
+        version=app.version,
+        description=app.description,
+        routes=app.routes,
+    )
+    app.openapi_schema = _update_openapi_examples(schema)
+    return app.openapi_schema
+
+
+app.openapi = custom_openapi
 
 
 def _is_duplicate_github_delivery(delivery_id: str | None) -> bool:
@@ -138,6 +321,112 @@ def _verify_github_signature(raw_body: bytes, signature_header: str | None) -> b
     
     # Use timing-constant comparison to prevent timing attacks
     return hmac.compare_digest(provided, expected)
+
+
+def _is_duplicate_jenkins_delivery(delivery_id: str | None) -> bool:
+    if not delivery_id:
+        return False
+
+    if delivery_id in _jenkins_delivery_ids:
+        return True
+
+    _jenkins_delivery_ids.add(delivery_id)
+    _jenkins_delivery_order.append(delivery_id)
+
+    if len(_jenkins_delivery_order) > _MAX_JENKINS_DELIVERY_CACHE:
+        evicted = _jenkins_delivery_order.popleft()
+        _jenkins_delivery_ids.discard(evicted)
+
+    return False
+
+
+def _is_duplicate_gitlab_delivery(delivery_id: str | None) -> bool:
+    if not delivery_id:
+        return False
+
+    if delivery_id in _gitlab_delivery_ids:
+        return True
+
+    _gitlab_delivery_ids.add(delivery_id)
+    _gitlab_delivery_order.append(delivery_id)
+
+    if len(_gitlab_delivery_order) > _MAX_GITLAB_DELIVERY_CACHE:
+        evicted = _gitlab_delivery_order.popleft()
+        _gitlab_delivery_ids.discard(evicted)
+
+    return False
+
+
+def _verify_gitlab_token(token_header: str | None) -> bool:
+    if not settings.gitlab_webhook_secret:
+        return True
+
+    if token_header is None:
+        return False
+
+    return hmac.compare_digest(token_header, settings.gitlab_webhook_secret)
+
+
+def _validate_gitlab_webhook_payload(payload: dict[str, Any]) -> None:
+    pipeline_section = payload.get("pipeline")
+    jobs = payload.get("jobs")
+    run_id = payload.get("run_id")
+
+    if pipeline_section is not None and not isinstance(pipeline_section, dict):
+        raise HTTPException(status_code=422, detail="Invalid pipeline field: expected a JSON object when provided")
+
+    if isinstance(pipeline_section, dict):
+        run_id = pipeline_section.get("id") or run_id
+
+    if run_id is None:
+        raise HTTPException(status_code=422, detail="Missing run identifier: provide pipeline.id or run_id")
+
+    repository_id = payload.get("project_id") or payload.get("repository_id")
+    if repository_id is None:
+        raise HTTPException(status_code=422, detail="Missing repository identifier: provide project_id or repository_id")
+
+    if jobs is not None:
+        if not isinstance(jobs, list):
+            raise HTTPException(status_code=422, detail="Invalid jobs field: expected a list when provided")
+        if any(not isinstance(job, dict) for job in jobs):
+            raise HTTPException(status_code=422, detail="Invalid jobs field: each job must be a JSON object")
+
+
+def _verify_jenkins_signature(raw_body: bytes, signature_header: str | None) -> bool:
+    if not settings.jenkins_webhook_secret:
+        return True
+
+    if not signature_header or not signature_header.startswith("sha256="):
+        return False
+
+    provided = signature_header.split("=", 1)[1]
+    expected = hmac.new(
+        key=settings.jenkins_webhook_secret.encode("utf-8"),
+        msg=raw_body,
+        digestmod=hashlib.sha256,
+    ).hexdigest()
+    return hmac.compare_digest(provided, expected)
+
+
+def _validate_jenkins_webhook_payload(payload: dict[str, Any]) -> None:
+    build_section = payload.get("build")
+    stages = payload.get("stages")
+    run_id = payload.get("run_id")
+
+    if build_section is not None and not isinstance(build_section, dict):
+        raise HTTPException(status_code=422, detail="Invalid build field: expected a JSON object when provided")
+
+    if isinstance(build_section, dict):
+        run_id = build_section.get("number") or run_id
+
+    if run_id is None:
+        raise HTTPException(status_code=422, detail="Missing run identifier: provide build.number or run_id")
+
+    if stages is not None:
+        if not isinstance(stages, list):
+            raise HTTPException(status_code=422, detail="Invalid stages field: expected a list when provided")
+        if any(not isinstance(stage, dict) for stage in stages):
+            raise HTTPException(status_code=422, detail="Invalid stages field: each stage must be a JSON object")
 
 
 def _validate_github_webhook_payload(payload: dict[str, Any]) -> None:
@@ -919,6 +1208,11 @@ async def github_actions_webhook(
     # This ensures we can map the event to a pipeline run
     _validate_github_webhook_payload(payload)
 
+    # Keep the latest GitHub payload in memory so Swagger/OpenAPI can render a live example.
+    global _latest_github_actions_payload
+    _latest_github_actions_payload = deepcopy(payload)
+    app.openapi_schema = None
+
     # Step 6: Detect duplicate deliveries
     # GitHub can resend the same delivery if our server doesn't respond quickly
     delivery_id = request.headers.get("X-GitHub-Delivery")
@@ -945,20 +1239,131 @@ async def github_actions_webhook(
 
 @app.post("/webhooks/gitlab-ci")
 async def gitlab_ci_webhook(
-    payload: dict,
+    request: Request,
+    payload: dict[str, Any] = Body(
+        ...,
+        examples={
+            "pipeline-completed": {
+                "summary": "GitLab CI pipeline completion payload",
+                "value": {
+                    "project_id": "12345",
+                    "ref": "main",
+                    "sha": "abc123def456",
+                    "pipeline": {
+                        "id": 9876,
+                        "status": "success",
+                        "duration": 12.5,
+                    },
+                    "jobs": [
+                        {
+                            "id": "job-1",
+                            "name": "unit-test",
+                            "stage": "test",
+                            "status": "success",
+                            "duration_ms": 3500,
+                        }
+                    ],
+                },
+            }
+        },
+    ),
     _: dict = Depends(require_role({"operator", "admin"})),
 ) -> dict:
+    token_header = request.headers.get("X-Gitlab-Token")
+    if not _verify_gitlab_token(token_header):
+        raise HTTPException(status_code=401, detail="Invalid GitLab webhook token")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Invalid payload: expected a JSON object")
+
+    _validate_gitlab_webhook_payload(payload)
+
+    delivery_id = request.headers.get("X-Gitlab-Event-UUID")
+    if _is_duplicate_gitlab_delivery(delivery_id):
+        queue_stats["duplicate_deliveries"] = queue_stats.get("duplicate_deliveries", 0) + 1
+        return {
+            "queued": False,
+            "duplicate": True,
+            "delivery_id": delivery_id,
+            "source": "gitlab_ci",
+        }
+
     await enqueue_source_payload("gitlab_ci", payload)
-    return {"queued": True, "source": "gitlab_ci"}
+    return {
+        "queued": True,
+        "duplicate": False,
+        "delivery_id": delivery_id,
+        "source": "gitlab_ci",
+    }
 
 
 @app.post("/webhooks/jenkins")
 async def jenkins_webhook(
-    payload: dict,
+    request: Request,
+    payload: dict[str, Any] = Body(
+        ...,
+        examples={
+            "build-completed": {
+                "summary": "Jenkins build completion payload",
+                "value": {
+                    "run_id": "jk-run-1",
+                    "job_name": "example-job",
+                    "branch": "main",
+                    "commit_sha": "abc123",
+                    "build": {
+                        "number": 42,
+                        "result": "SUCCESS",
+                        "duration": 1000,
+                    },
+                    "stages": [
+                        {
+                            "id": "stage-1",
+                            "name": "unit-tests",
+                            "status": "SUCCESS",
+                            "duration_ms": 500,
+                        }
+                    ],
+                },
+            }
+        },
+    ),
     _: dict = Depends(require_role({"operator", "admin"})),
 ) -> dict:
+    """
+    Jenkins Webhook Receiver
+
+    Accepts Jenkins build or stage payloads, verifies optional HMAC signature,
+    validates required fields, deduplicates repeated deliveries, and queues the
+    event for normalization and scoring.
+    """
+    raw_body = await request.body()
+    signature_header = request.headers.get("X-Jenkins-Signature")
+
+    if not _verify_jenkins_signature(raw_body, signature_header):
+        raise HTTPException(status_code=401, detail="Invalid Jenkins webhook signature")
+
+    if not isinstance(payload, dict):
+        raise HTTPException(status_code=422, detail="Invalid payload: expected a JSON object")
+
+    _validate_jenkins_webhook_payload(payload)
+
+    delivery_id = request.headers.get("X-Jenkins-Delivery")
+    if _is_duplicate_jenkins_delivery(delivery_id):
+        queue_stats["duplicate_deliveries"] = queue_stats.get("duplicate_deliveries", 0) + 1
+        return {
+            "queued": False,
+            "duplicate": True,
+            "delivery_id": delivery_id,
+            "source": "jenkins",
+        }
+
     await enqueue_source_payload("jenkins", payload)
-    return {"queued": True, "source": "jenkins"}
+    return {
+        "queued": True,
+        "duplicate": False,
+        "delivery_id": delivery_id,
+        "source": "jenkins",
+    }
 
 
 @app.get("/queue/status", response_model=QueueStatusResponse)

@@ -17,7 +17,7 @@ Expected:
 ## Fast Workflow-Only Verification
 Use GitHub Actions as the only production input source.
 
-1. Trigger `.github/workflows/optimizer_webhook.yml` from the `test-integration` branch.
+1. Trigger `.github/workflows/optimizer_webhook.yml` from the `main` branch.
 2. Check workflow logs for `Health status: 200`.
 3. Check workflow logs for `Webhook HTTP status: 200`.
 4. Open the public tunnel URL `/status-ui` to confirm live PASS/FAIL state.

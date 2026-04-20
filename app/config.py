@@ -9,6 +9,8 @@ Environment Variables:
   DATABASE_URL: SQLAlchemy database URL (default: "sqlite:///./optimizer.db")
   APP_API_KEY: Authentication token for API access (optional, default: "")
   GITHUB_WEBHOOK_SECRET: Secret for HMAC signature verification of GitHub webhooks (optional)
+  GITLAB_WEBHOOK_SECRET: Secret token for GitLab webhook verification (optional)
+  JENKINS_WEBHOOK_SECRET: Secret for HMAC signature verification of Jenkins webhooks (optional)
   RISK_BLOCK_THRESHOLD: Score >= this value blocks deployment (default: 85)
   RISK_DELAY_THRESHOLD: Score >= this value requests delayed deployment (default: 70)
   RISK_CANARY_THRESHOLD: Score >= this value recommends canary deployment (default: 50)
@@ -38,6 +40,12 @@ class Settings:
     # Used to validate that webhook payloads originate from trusted source
     # If not set, signature validation is skipped (not recommended for production)
     github_webhook_secret: str = os.getenv("GITHUB_WEBHOOK_SECRET", "")
+
+    # GitLab webhook secret token used for optional request validation
+    gitlab_webhook_secret: str = os.getenv("GITLAB_WEBHOOK_SECRET", "")
+
+    # Jenkins webhook secret used for optional HMAC-SHA256 signature validation
+    jenkins_webhook_secret: str = os.getenv("JENKINS_WEBHOOK_SECRET", "")
 
     # Risk Scoring Thresholds: Control deployment recommendations
     # Higher scores indicate higher risk/uncertainty in CI/CD metrics

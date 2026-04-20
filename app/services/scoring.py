@@ -14,14 +14,20 @@ def score_and_persist_run(db: Session, run_id: str) -> RiskAssessmentResponse | 
     data = [
         {
             "run_id": e.run_id,
+            "source_system": e.source_system,
+            "repository_id": e.repository_id,
+            "pipeline_id": e.pipeline_id,
             "status": e.status,
             "retry_count": e.retry_count,
             "duration_ms": e.duration_ms,
+            "branch": e.branch,
+            "environment": e.environment,
+            "event_ts_utc": e.event_ts_utc,
         }
         for e in events
     ]
 
-    assessment = calculate_risk(data)
+    assessment = calculate_risk(data, db=db)
     db_obj = RiskAssessment(
         run_id=assessment.run_id,
         risk_score=assessment.risk_score,

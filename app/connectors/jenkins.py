@@ -8,6 +8,8 @@ class JenkinsMapper(SourceMapper):
     def map_to_normalized_events(self, payload: dict) -> list[NormalizedEvent]:
         build = payload.get("build", {})
         stages = payload.get("stages", [])
+        build_console_hash = str(build.get("log_excerpt_hash", payload.get("log_excerpt_hash", ""))) or None
+        build_failure_signature = str(build.get("failure_signature", payload.get("failure_signature", ""))) or None
 
         run_id = str(build.get("number", payload.get("run_id", "jk-run-unknown")))
         repository_id = str(payload.get("job_name", payload.get("repository_id", "unknown-job")))
@@ -50,8 +52,8 @@ class JenkinsMapper(SourceMapper):
                     actor=str(payload.get("actor", "jenkins")),
                     environment=str(payload.get("environment", "")),
                     retry_count=int(stage.get("retries", 0)),
-                    failure_signature=str(stage.get("failure_signature", "")) or None,
-                    log_excerpt_hash=str(stage.get("log_excerpt_hash", "")) or None,
+                    failure_signature=str(stage.get("failure_signature", build_failure_signature or "")) or None,
+                    log_excerpt_hash=str(stage.get("log_excerpt_hash", build_console_hash or "")) or None,
                     metadata=stage,
                 )
             )

@@ -52,6 +52,8 @@ Use these environment variable names in your local `.env` (never commit real val
 | `DATABASE_URL` | Database connection string | `sqlite:///./optimizer.db` |
 | `APP_API_KEY` | Optional API key for protected routes | `change-me` |
 | `GITHUB_WEBHOOK_SECRET` | Optional HMAC secret for webhook signature verification | `change-me-github-secret` |
+| `GITLAB_WEBHOOK_SECRET` | Optional secret token for GitLab webhook verification | `change-me-gitlab-secret` |
+| `JENKINS_WEBHOOK_SECRET` | Optional HMAC secret for Jenkins webhook signature verification | `change-me-jenkins-secret` |
 | `RISK_BLOCK_THRESHOLD` | Score threshold for `block` | `85` |
 | `RISK_DELAY_THRESHOLD` | Score threshold for `delay` | `70` |
 | `RISK_CANARY_THRESHOLD` | Score threshold for `canary` | `50` |
@@ -105,6 +107,14 @@ If `APP_API_KEY` is configured, pass:
 Always pass role header:
 - `X-Role: viewer | operator | admin`
 
+For Jenkins webhook hardening, optionally pass:
+- `X-Jenkins-Signature: sha256=<hex>`
+- `X-Jenkins-Delivery: <unique-id>`
+
+For GitLab webhook hardening, optionally pass:
+- `X-Gitlab-Token: <secret-token>`
+- `X-Gitlab-Event-UUID: <unique-id>`
+
 Optional for feedback attribution:
 - `X-User: your-name`
 
@@ -149,7 +159,7 @@ Typical fail example:
 Production input should come from GitHub Actions only.
 
 How the tool receives input:
-1. A GitHub Actions workflow runs on `test-integration` or `main`.
+1. A GitHub Actions workflow runs on `main`.
 2. The workflow builds a JSON payload from GitHub runtime context.
 3. The workflow POSTs that payload to `POST /webhooks/github-actions`.
 4. The API normalizes, stores, scores, and exposes the result through `/status/checks`, `/status-ui`, `/runs`, and `/assessments`.
@@ -173,7 +183,7 @@ Run the full project smoke test from PowerShell:
 
 Use GitHub Actions as the only production input path.
 
-1. Trigger `.github/workflows/optimizer_webhook.yml` from the `test-integration` branch.
+1. Trigger `.github/workflows/optimizer_webhook.yml` from the `main` branch.
 2. Confirm the workflow log shows `Health status: 200`.
 3. Confirm the workflow log shows `Webhook HTTP status: 200`.
 4. Open `/status/checks` and `/status-ui` on the public tunnel URL to confirm live PASS/FAIL status.
