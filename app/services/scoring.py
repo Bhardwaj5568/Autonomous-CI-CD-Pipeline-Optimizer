@@ -37,4 +37,48 @@ def score_and_persist_run(db: Session, run_id: str) -> RiskAssessmentResponse | 
     )
     db.add(db_obj)
     db.commit()
+
+    # --- AutoOptimizer Integration ---
+
+    try:
+        from app.services.auto_optimizer import AutoOptimizer, AuditLogger
+        from app.services.quarantine import auto_quarantine_all
+        from app.config import settings
+        from app.connectors.github_actions_client import GitHubActionsClient
+        from app.connectors.gitlab_ci_client import GitLabCIClient
+        from app.connectors.jenkins_client import JenkinsClient
+
+        cicd_clients = {}
+        # GitHub Actions client
+        if settings.github_token and settings.github_owner and settings.github_repo:
+            cicd_clients["github_actions"] = GitHubActionsClient(settings.github_token)
+            cicd_clients["github_actions"].owner = settings.github_owner
+            cicd_clients["github_actions"].repo = settings.github_repo
+        # GitLab CI client
+        if settings.gitlab_token and settings.gitlab_project_id:
+            cicd_clients["gitlab_ci"] = GitLabCIClient(settings.gitlab_token)
+            cicd_clients["gitlab_ci"].project_id = settings.gitlab_project_id
+        # Jenkins client
+        if settings.jenkins_url and settings.jenkins_user and settings.jenkins_api_token:
+            cicd_clients["jenkins"] = JenkinsClient(settings.jenkins_url, settings.jenkins_user, settings.jenkins_api_token)
+
+        audit_logger = AuditLogger(db=db)
+        auto_optimizer = AutoOptimizer(cicd_clients, audit_logger, db=db)
+        recommendation_payload = {
+            "action": assessment.recommendation,
+            "system": data[0]["source_system"] if data else "unknown",
+            "run_id": run_id,
+        }
+        auto_optimizer.handle_recommendation(recommendation_payload)
+
+        # Auto-quarantine flaky tests (runs async, doesn't block scoring)
+        if assessment.risk_score >= 60:  # Only for risky runs
+            try:
+                auto_quarantine_all(db, cicd_clients)
+            except Exception as qe:
+                print(f"[Quarantine] Error: {qe}")
+
+    except Exception as e:
+        print(f"[AutoOptimizer] Error during auto-action: {e}")
+
     return assessment

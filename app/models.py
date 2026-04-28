@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy import DateTime, Float, Integer, JSON, String
+from sqlalchemy import Boolean, DateTime, Float, Integer, JSON, String
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.database import Base
@@ -78,4 +78,36 @@ class AuditLog(Base):
     action_type: Mapped[str] = mapped_column(String(64), index=True)
     actor: Mapped[str] = mapped_column(String(128), index=True)
     details: Mapped[dict] = mapped_column(JSON, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+
+class QuarantinedStep(Base):
+    """Tracks steps/jobs that have been auto-quarantined by the optimizer."""
+    __tablename__ = "quarantined_steps"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    source_system: Mapped[str] = mapped_column(String(32), index=True)
+    repository_id: Mapped[str] = mapped_column(String(128), index=True)
+    pipeline_id: Mapped[str] = mapped_column(String(128), index=True)
+    step_name: Mapped[str] = mapped_column(String(128), index=True)
+    reason: Mapped[str] = mapped_column(String(512), default="")
+    fail_rate: Mapped[float] = mapped_column(Float, default=0.0)
+    confidence: Mapped[float] = mapped_column(Float, default=0.0)
+    active: Mapped[bool] = mapped_column(Boolean, default=True)   # False = unquarantined
+    quarantined_by: Mapped[str] = mapped_column(String(64), default="auto-optimizer")
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+
+class MLModelSnapshot(Base):
+    """Stores trained ML model metadata and feature importances."""
+    __tablename__ = "ml_model_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    model_version: Mapped[str] = mapped_column(String(32), index=True)
+    algorithm: Mapped[str] = mapped_column(String(64), default="RandomForest")
+    accuracy: Mapped[float] = mapped_column(Float, default=0.0)
+    training_samples: Mapped[int] = mapped_column(Integer, default=0)
+    feature_importances: Mapped[dict] = mapped_column(JSON, default=dict)
+    label_distribution: Mapped[dict] = mapped_column(JSON, default=dict)
     created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)

@@ -19,23 +19,36 @@ Environment Variables:
 import os
 
 
+
 class Settings:
     """
     Configuration singleton for the application.
     All settings are loaded from environment variables at startup.
     """
-    
+
+    # CI/CD API credentials/config
+    github_token: str = os.getenv("GITHUB_TOKEN", "")
+    github_owner: str = os.getenv("GITHUB_OWNER", "")
+    github_repo: str = os.getenv("GITHUB_REPO", "")
+
+    gitlab_token: str = os.getenv("GITLAB_TOKEN", "")
+    gitlab_project_id: str = os.getenv("GITLAB_PROJECT_ID", "")
+
+    jenkins_url: str = os.getenv("JENKINS_URL", "")
+    jenkins_user: str = os.getenv("JENKINS_USER", "")
+    jenkins_api_token: str = os.getenv("JENKINS_API_TOKEN", "")
+
     # Application metadata
     app_name: str = os.getenv("APP_NAME", "Autonomous CI/CD Pipeline Optimizer")
-    
+
     # Database configuration
     database_url: str = os.getenv("DATABASE_URL", "sqlite:///./optimizer.db")
-    
+
     # Authentication: API key for protecting endpoints (optional)
     # Format: Set APP_API_KEY env variable to enable API key validation
     # If not set, API key authentication is disabled
     app_api_key: str = os.getenv("APP_API_KEY", "")
-    
+
     # Webhook Security: Secret for HMAC-SHA256 signature verification
     # Used to validate that webhook payloads originate from trusted source
     # If not set, signature validation is skipped (not recommended for production)
